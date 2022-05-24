@@ -56,7 +56,7 @@ namespace rocr {
 
 class Flag {
  public:
-  enum SDMA_OVERRIDE { SDMA_DISABLE, SDMA_ENABLE, SDMA_DEFAULT };
+  enum SDMA_OVERRIDE { SDMA_DISABLE, SDMA_ENABLE, SDMA_DEFAULT, SDMA_FORCE };
 
   // The values are meaningful and chosen to satisfy the thunk API.
   enum XNACK_REQUEST { XNACK_DISABLE = 0, XNACK_ENABLE = 1, XNACK_UNCHANGED = 2 };
@@ -82,6 +82,10 @@ class Flag {
 
     var = os::GetEnvVar("HSA_ENABLE_SDMA");
     enable_sdma_ = (var == "0") ? SDMA_DISABLE : ((var == "1") ? SDMA_ENABLE : SDMA_DEFAULT);
+
+    var = os::GetEnvVar("HSA_FORCE_SDMA");
+    force_sdma_ = (var == "0") ? SDMA_DISABLE : ((var == "1") ? SDMA_FORCE : SDMA_DEFAULT);
+    enable_sdma_ = (var == "1") ? SDMA_ENABLE : enable_sdma_;
 
     visible_gpus_ = os::GetEnvVar("ROCR_VISIBLE_DEVICES");
     filter_visible_gpus_ = os::IsEnvVarSet("ROCR_VISIBLE_DEVICES");
@@ -188,6 +192,8 @@ class Flag {
 
   SDMA_OVERRIDE enable_sdma() const { return enable_sdma_; }
 
+  SDMA_OVERRIDE force_sdma() const { return force_sdma_; }
+
   std::string visible_gpus() const { return visible_gpus_; }
 
   bool filter_visible_gpus() const { return filter_visible_gpus_; }
@@ -243,6 +249,7 @@ class Flag {
   bool coop_cu_count_;
 
   SDMA_OVERRIDE enable_sdma_;
+  SDMA_OVERRIDE force_sdma_;
 
   bool filter_visible_gpus_;
   std::string visible_gpus_;

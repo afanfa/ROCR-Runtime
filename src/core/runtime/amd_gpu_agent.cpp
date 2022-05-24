@@ -601,11 +601,16 @@ void GpuAgent::InitDma() {
   // Decide which engine to use for blits.
   auto blit_lambda = [this](bool use_xgmi, lazy_ptr<core::Queue>& queue, bool isHostToDev) {
     Flag::SDMA_OVERRIDE sdma_override = core::Runtime::runtime_singleton_->flag().enable_sdma();
-
+    Flag::SDMA_OVERRIDE sdma_force = core::Runtime::runtime_singleton_->flag().force_sdma();
     // User SDMA queues are unstable on gfx8 and unsupported on gfx1013.
     bool use_sdma =
         ((isa_->GetMajorVersion() != 8) && (isa_->GetVersion() != std::make_tuple(10, 1, 3)));
-    if (sdma_override != Flag::SDMA_DEFAULT) use_sdma = (sdma_override == Flag::SDMA_ENABLE);
+
+    if (sdma_override != Flag::SDMA_DEFAULT || sdma_force == Flag::SDMA_FORCE)
+      {
+	use_sdma = (sdma_override == Flag::SDMA_ENABLE || sdma_force == Flag::SDMA_FORCE);
+	printf("Using SDMA FLAG: %d %d\n",sdma_override,sdma_force);
+      }
 
     if (use_sdma && (HSA_PROFILE_BASE == profile_)) {
       // On gfx90a ensure that HostToDevice queue is created first and so is placed on SDMA0.
@@ -642,12 +647,26 @@ void GpuAgent::InitDma() {
   //    It could engage either a Blit Kernel or sDMA
   // -- Blit at index DefaultBlitCount(3) and beyond deal
   //    exclusively P2P over xGMI links
-  blits_[BlitDevToDev].reset([this]() {
-    auto ret = CreateBlitKernel((*queues_[QueueUtility]).get());
-    if (ret == nullptr)
-      throw AMD::hsa_exception(HSA_STATUS_ERROR_OUT_OF_RESOURCES, "Blit creation failed.");
-    return ret;
-  });
+
+  Flag::SDMA_OVERRIDE sdma_force = core::Runtime::runtime_singleton_->flag().force_sdma();
+
+  if(sdma_force==Flag::SDMA_FORCE)
+    {
+      printf("Creating sdma dev to dev\n");
+      blits_[BlitDevToDev].reset(
+	    [blit_lambda, this]() { return blit_lambda(false, queues_[QueueUtility], false); });
+    }
+  else
+    {
+      printf("Creating blit kernel\n");
+      blits_[BlitDevToDev].reset([this]() {
+	  auto ret = CreateBlitKernel((*queues_[QueueUtility]).get());
+	  if (ret == nullptr)
+	    throw AMD::hsa_exception(HSA_STATUS_ERROR_OUT_OF_RESOURCES, "Blit creation failed.");
+	  return ret;
+	});
+    }
+  
   blits_[BlitHostToDev].reset(
       [blit_lambda, this]() { return blit_lambda(false, queues_[QueueBlitOnly], true); });
   blits_[BlitDevToHost].reset(
@@ -703,6 +722,7 @@ hsa_status_t GpuAgent::PostToolsInit() {
 }
 
 hsa_status_t GpuAgent::DmaCopy(void* dst, const void* src, size_t size) {
+  printf("Dma copy 1\n");
   return blits_[BlitDevToDev]->SubmitLinearCopyCommand(dst, src, size);
 }
 
@@ -719,7 +739,7 @@ hsa_status_t GpuAgent::DmaCopy(void* dst, core::Agent& dst_agent,
     // domain correctly.
     out_signal.async_copy_agent(core::Agent::Convert(this->public_handle()));
   }
-
+  printf("Dma copy 2\n");
   hsa_status_t stat = blit->SubmitLinearCopyCommand(dst, src, size, dep_signals, out_signal);
 
   return stat;
@@ -731,6 +751,8 @@ hsa_status_t GpuAgent::DmaCopyRect(const hsa_pitched_ptr_t* dst, const hsa_dim3_
                                    std::vector<core::Signal*>& dep_signals,
                                    core::Signal& out_signal) {
   if (isa_->GetMajorVersion() < 9) return HSA_STATUS_ERROR_INVALID_AGENT;
+
+  printf("Dma copy rect\n");
 
   lazy_ptr<core::Blit>& blit =
       (dir == hsaHostToDevice) ? blits_[BlitHostToDev] : blits_[BlitDevToHost];
